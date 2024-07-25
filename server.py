@@ -37,7 +37,7 @@ class Server():
                 self.sendText(msg)
 
     def sendText(self, msg):
-        for sock in self.clients:
+        for sock in self.client:
             try:
                 sock.send(bytes(msg, "utf8"))
             except Exception as e:
