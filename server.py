@@ -1,14 +1,16 @@
+import json
 from socket import AF_INET, SOCK_STREAM, socket
-from threading import Thread
+from threading import Thread, Lock
 
 
-class Server():
+class Server:
     def __init__(self, host, port):
         self.host = host
         self.port = port
         self.sock = socket(AF_INET, SOCK_STREAM)
         self.buffer = 1024
-        self.client = {}
+        self.clients = {}  # sock -> username
+        self.lock = Lock()
 
     def server_start(self):
         self.sock.bind((self.host, self.port))
@@ -19,45 +21,49 @@ class Server():
             try:
                 cli_sock, cli_addr = self.sock.accept()
                 print(f"Con received from {cli_addr}.")
-
-                self.client[cli_sock] = cli_addr
-                # self.addrs[cli_addr] = cli_addr
-
-                # Thread(target=self.handling, args=(cli_sock,)).start()
                 Thread(target=self.handling, args=(
                     cli_sock,), daemon=True).start()
-
             except Exception as e:
                 print(f"{e} Con closed")
 
     def handling(self, cli_sock):
-        while True:
-            try:
-                msg = cli_sock.recv(self.buffer).decode("utf8")
-                if not msg:
+        try:
+            # Primeiro pacote recebido deve ser o username
+            username = cli_sock.recv(self.buffer).decode("utf8")
+            with self.lock:
+                self.clients[cli_sock] = username
+
+            self.send_text(f"🔵 {username} entrou no chat")
+
+            while True:
+                data = cli_sock.recv(self.buffer).decode("utf8")
+                if not data:
                     break
 
-                print(f"Message received from {self.client[cli_sock]}: {msg}.")
-                self.send_text(f"{self.client[cli_sock]} says: {msg}")
+                msg = json.loads(data)
+                print(f"[{msg['from']}] {msg['msg']}")
+                self.send_text(f"{msg['from']}: {msg['msg']}")
 
-            except OSError:
-                break
-
-        print(f"Client {self.client[cli_sock]} disconnected")
-        del self.client[cli_sock]
-        cli_sock.close()
+        except Exception as e:
+            print(f"Erro: {e}")
+        finally:
+            with self.lock:
+                username = self.clients.get(cli_sock, "Desconhecido")
+                del self.clients[cli_sock]
+            cli_sock.close()
+            self.send_text(f"🔴 {username} saiu do chat")
 
     def send_text(self, msg):
-        for sock in self.client.keys():
-            try:
-                sock.send(bytes(msg, "utf8"))
-            except Exception as e:
-                print(e)
+        with self.lock:
+            for sock in list(self.clients.keys()):
+                try:
+                    sock.send(bytes(msg, "utf8"))
+                except Exception as e:
+                    print(f"Erro ao enviar msg: {e}")
 
 
 if __name__ == "__main__":
     try:
-        server = Server("localhost", 8000).server_start()
-        server.server_start()
+        Server("0.0.0.0", 8000).server_start()
     except KeyboardInterrupt:
         print(" <- SERVER CLOSED.")
